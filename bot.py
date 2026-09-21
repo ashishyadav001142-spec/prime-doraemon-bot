@@ -2,7 +2,7 @@
 """
 PRIME DORAEMON BOT
 Production-ready Telegram file-delivery bot with dynamic channel verification,
-key validation, upload session forwarding, live stats button, and 15-minute auto-deletion.
+upload session forwarding, and 15-minute auto-deletion of delivered messages.
 
 Compatible with GitHub + Render Free Web Service (embeds aiohttp health check server).
 """
@@ -26,8 +26,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
+    ReplyKeyboardRemove,
     BotCommand,
     constants
 )
@@ -148,14 +147,11 @@ def mark_delivery_deleted(log_id: Optional[str] = None):
         logger.debug(f"Failed to mark delivery log {log_id} deleted: {e}")
 
 # ====================================================================
-# 3. CHANNEL MEMBERSHIP VERIFICATION & KEYBOARDS
+# 3. CHANNEL MEMBERSHIP VERIFICATION
 # ====================================================================
 
 async def check_user_membership(bot, user_id: int, channel: Dict[str, Any]) -> bool:
-    """
-    Check if a user is a member of the given channel via Telegram Bot API.
-    Handles channel IDs formatted as integer strings (-100...) or @usernames.
-    """
+    """Check if a user is a member of the given channel via Telegram Bot API."""
     channel_id_raw = channel.get("channel_id", "").strip()
     if not channel_id_raw:
         return True
@@ -205,7 +201,7 @@ async def get_missing_channels(bot, user_id: int, channels: List[Dict[str, Any]]
     return missing
 
 def build_channel_keyboard(channels: List[Dict[str, Any]], is_reverify: bool = False) -> InlineKeyboardMarkup:
-    """Constructs Telegram inline buttons for channel links, verification, and stats."""
+    """Constructs Telegram inline buttons for channel links and verification."""
     keyboard = []
     for ch in channels:
         name = ch.get("name", "Telegram Channel")
@@ -214,19 +210,8 @@ def build_channel_keyboard(channels: List[Dict[str, Any]], is_reverify: bool = F
             keyboard.append([InlineKeyboardButton(text=f"📢 JOIN CHANNEL • {name}", url=link)])
 
     verify_label = "🔄 RE-VERIFY" if is_reverify else "✅ VERIFY"
-    keyboard.append([
-        InlineKeyboardButton(text=verify_label, callback_data="verify_channels"),
-        InlineKeyboardButton(text="📊 STATS", callback_data="btn_refresh_stats")
-    ])
+    keyboard.append([InlineKeyboardButton(text=verify_label, callback_data="verify_channels")])
     return InlineKeyboardMarkup(keyboard)
-
-def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Persistent reply keyboard with Start, Stats, and Cancel buttons."""
-    keyboard = [
-        [KeyboardButton("🚀 START"), KeyboardButton("📊 STATS")],
-        [KeyboardButton("❌ CANCEL SESSION")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 # ====================================================================
 # 4. AUTO-DELETE WORKER
@@ -285,72 +270,6 @@ async def periodic_deletion_sweeper(bot):
 # 5. BOT HANDLERS & COMMANDS
 # ====================================================================
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /stats command and displays live bot statistics."""
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    if not chat_id:
-        return
-
-    if update.callback_query:
-        try:
-            await update.callback_query.answer()
-        except Exception:
-            pass
-
-    try:
-        content_items_res = supabase.table("content_items").select("id", count="exact").eq("active", True).execute()
-        channels_res = supabase.table("channels").select("id", count="exact").eq("active", True).execute()
-        logs_res = supabase.table("delivery_logs").select("id", count="exact").execute()
-
-        total_keys = content_items_res.count if content_items_res.count is not None else len(content_items_res.data or [])
-        active_channels = channels_res.count if channels_res.count is not None else len(channels_res.data or [])
-        total_delivered = logs_res.count if logs_res.count is not None else len(logs_res.data or [])
-
-        text = (
-            "📊 **PRIME DORAEMON BOT — LIVE STATS**\n\n"
-            f"🔑 **Active Delivery Keys:** `{total_keys}`\n"
-            f"📦 **Total Transmissions:** `{total_delivered}`\n"
-            f"📢 **Mandatory Channels:** `{active_channels}`\n"
-            "⏱️ **Auto-Delete Timer:** `15 Minutes (Chat-Only)`\n"
-            "🟢 **Bot Status:** `Online & Operational`\n"
-            "🛡️ **Channel Verification:** `Enforced`\n\n"
-            "👉 Content receive karne ke liye apna **Key** paste karein."
-        )
-    except Exception as e:
-        logger.error(f"Error fetching stats: {e}")
-        text = (
-            "📊 **PRIME DORAEMON BOT — LIVE STATS**\n\n"
-            "🟢 **Bot Status:** `Online & Operational`\n"
-            "⏱️ **Auto-Delete Timer:** `15 Minutes`\n"
-            "🛡️ **System:** `Ready & Active`\n\n"
-            "👉 Content receive karne ke liye apna **Key** paste karein."
-        )
-
-    inline_kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🚀 Start Verification", callback_data="btn_start"),
-            InlineKeyboardButton("🔄 Refresh Stats", callback_data="btn_refresh_stats")
-        ]
-    ])
-
-    if update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(
-                text=text,
-                reply_markup=inline_kb,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return
-        except Exception:
-            pass
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        reply_markup=get_main_reply_keyboard(),
-        parse_mode=ParseMode.MARKDOWN
-    )
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
     if not update.effective_user or not update.effective_chat:
@@ -375,9 +294,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channels = get_active_channels()
 
     if not channels:
-        inline_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Bot Stats", callback_data="btn_refresh_stats")]
-        ])
         msg = (
             f"✨ **Welcome to {bot_name}!**\n\n"
             f"🔑 **{settings.get('key_prompt', 'Paste Your Key')}**\n"
@@ -386,7 +302,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=msg,
-            reply_markup=inline_kb,
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -395,11 +311,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     missing = await get_missing_channels(context.bot, user.id, channels)
 
     if not missing:
-        inline_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Bot Stats", callback_data="btn_refresh_stats")]
-        ])
         msg = (
-            f"🤖 **{bot_name}**\n\n"
+            f"✨ **Welcome to {bot_name}!**\n\n"
             "✅ **Verification Successful!**\n\n"
             f"🔑 **{settings.get('key_prompt', 'Paste Your Key')}**\n"
             "Please send your unique key below to receive your content."
@@ -407,18 +320,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=msg,
-            reply_markup=inline_kb,
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
         return
-
-    # Send persistent keyboard first
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"🤖 **{bot_name}** Initialized. Use menu buttons below anytime:",
-        reply_markup=get_main_reply_keyboard(),
-        parse_mode=ParseMode.MARKDOWN
-    )
 
     # User still needs to join channels
     keyboard = build_channel_keyboard(missing, is_reverify=False)
@@ -448,7 +353,7 @@ async def verify_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     channels = get_active_channels()
     if not channels:
         await query.edit_message_text(
-            f"✅ **Verification Successful!**\n\n"
+            f"✨ **Welcome to {bot_name}!**\n\n"
             f"🔑 **{settings.get('key_prompt', 'Paste Your Key')}**\n"
             "Please send your key below to receive your content.",
             parse_mode=ParseMode.MARKDOWN
@@ -458,15 +363,11 @@ async def verify_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     missing = await get_missing_channels(context.bot, user_id, channels)
 
     if not missing:
-        inline_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Bot Stats", callback_data="btn_refresh_stats")]
-        ])
         await query.edit_message_text(
             f"🤖 **{bot_name}**\n\n"
             "✅ **Verification Successful!**\n\n"
             f"🔑 **{settings.get('key_prompt', 'Paste Your Key')}**\n"
             "Send your key below to receive your content.",
-            reply_markup=inline_kb,
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -492,11 +393,11 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_upload_key", None)
     context.user_data.pop("pending_caption", None)
 
-    msg = "❌ **Upload session cancel ho gaya hai.**" if had_session else "ℹ️ Koi active upload session nahi tha."
+    msg = "❌ **Upload session cancel kar diya gaya hai.**" if had_session else "ℹ️ Koi active upload session nahi tha."
     if update.effective_message:
         await update.effective_message.reply_text(
             msg,
-            reply_markup=get_main_reply_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
 
@@ -526,14 +427,14 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Ye Upload Key pehle use ho chuki hai ya exist nahi karti.\n"
                     "Kripya **PRIME DORAEMON ADMIN** app se nayi Upload Key generate karein."
                 ),
-                reply_markup=get_main_reply_keyboard(),
+                reply_markup=ReplyKeyboardRemove(),
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="❌ **Invalid key.** Please check your key and try again.",
-                reply_markup=get_main_reply_keyboard(),
+                reply_markup=ReplyKeyboardRemove(),
                 parse_mode=ParseMode.MARKDOWN
             )
         return
@@ -551,7 +452,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="⚠️ **Ye Upload Key deactivate ho chuki hai.** Kripya Admin App se nayi key generate karein.",
-                reply_markup=get_main_reply_keyboard(),
+                reply_markup=ReplyKeyboardRemove(),
                 parse_mode=ParseMode.MARKDOWN
             )
             return
@@ -566,11 +467,11 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=(
                 "📥 **Upload Key Verified!**\n\n"
                 "Aapka upload session active ho chuka hai.\n\n"
-                "Ab aap jo bhi **APK, Document, Video, Photo, Audio, Voice, Animation ya Forwarded File** save karna chahte hain, use **is chat me send ya forward karein**.\n\n"
+                "Ab aap jo bhi **APK, Document, Video, Photo, Audio, Voice ya Forwarded File** save karna chahte hain, use **is chat me send ya forward karein**.\n\n"
                 "👉 File aate hi main use Supabase me link karke aapko **Final Delivery Key (PD-XXXX)** bana kar de dunga!\n\n"
-                "*(Cancel karne ke liye niche ❌ CANCEL SESSION button dabayein)*"
+                "*(Cancel karne ke liye /cancel likhein)*"
             ),
-            reply_markup=get_main_reply_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -598,7 +499,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text="⚠️ **This key has been deactivated.** Please contact the administrator.",
-            reply_markup=get_main_reply_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -612,7 +513,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="⏳ **This key has expired.**",
-                    reply_markup=get_main_reply_keyboard(),
+                    reply_markup=ReplyKeyboardRemove(),
                     parse_mode=ParseMode.MARKDOWN
                 )
                 return
@@ -626,7 +527,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = content_item.get("caption") or ""
     content_type = content_item.get("content_type", "text")
 
-    # Critical Safety Guard: Never send "PENDING_UPLOAD" to Telegram API
+    # Safety Guard: If key still pending upload, switch to upload mode
     if file_id == "PENDING_UPLOAD" or user_text.startswith("PD-UP-") or "-UP-" in user_text:
         context.user_data["pending_upload_id"] = content_item["id"]
         context.user_data["pending_upload_key"] = user_text
@@ -638,9 +539,9 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Aapka upload session active ho chuka hai.\n"
                 "Ab aap jo bhi **APK, Document, Video, Photo, Audio ya Forwarded File** save karna chahte hain, use **is chat me send ya forward karein**.\n\n"
                 "👉 File aate hi main use link karke aapko **Final Delivery Key (PD-XXXX)** bana kar de dunga!\n\n"
-                "*(Cancel karne ke liye niche ❌ CANCEL SESSION button dabayein)*"
+                "*(Cancel karne ke liye /cancel likhein)*"
             ),
-            reply_markup=get_main_reply_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -648,7 +549,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await context.bot.send_message(
         chat_id=chat_id,
         text="✅ **Key verified**\n\nDelivering your content now...\n*(Delivered messages will automatically disappear after ~15 minutes)*",
-        reply_markup=get_main_reply_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -780,7 +681,7 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Unified router for all user messages:
-    - If user clicks Reply Keyboard buttons (START, STATS, CANCEL) -> routes to handlers.
+    - If user sends /start or /cancel -> routes accordingly.
     - If user is in upload mode -> saves sent/forwarded file and outputs Final Delivery Key.
     - If user sent text -> processes key redemption.
     - If user sent media without upload session -> shows helpful guidance.
@@ -791,20 +692,16 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
     message = update.effective_message
     chat_id = update.effective_chat.id
 
-    # Check for text commands or reply keyboard buttons first
+    # Check for text commands
     if message.text:
         text_clean = message.text.strip()
         text_lower = text_clean.lower()
 
-        if text_lower in ["🚀 start", "start", "/start"]:
+        if text_lower in ["/start", "start", "🚀 start"]:
             await start_command(update, context)
             return
 
-        if text_lower in ["📊 stats", "stats", "stat", "/stats", "/stat"]:
-            await stats_command(update, context)
-            return
-
-        if text_lower in ["❌ cancel session", "cancel", "/cancel"]:
+        if text_lower in ["/cancel", "cancel", "❌ cancel session"]:
             await cancel_command(update, context)
             return
 
@@ -886,7 +783,7 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
                     "👉 Jab bhi koi user ye key bot me paste karega, usko ye file deliver hogi aur **theek 15 minute baad us user ki chat se automatically delete ho jayegi**!\n"
                     "👉 Supabase me ye content hamesha permanently safe rahega."
                 ),
-                reply_markup=get_main_reply_keyboard(),
+                reply_markup=ReplyKeyboardRemove(),
                 parse_mode=ParseMode.MARKDOWN
             )
         except Exception as e:
@@ -894,7 +791,7 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"❌ Error saving content to database: {str(e)}",
-                reply_markup=get_main_reply_keyboard()
+                reply_markup=ReplyKeyboardRemove()
             )
         return
 
@@ -918,9 +815,9 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
             "3. Wo key (`PD-UP-XXXX`) yahan chat me paste karein.\n"
             "4. Upload session active hone ke baad apni file bhejein.\n\n"
             "👉 **Agar aap User hain:**\n"
-            "Kripya apna **Delivery Key** paste karein ya **🚀 START** dabayein."
+            "Kripya apna **Delivery Key** paste karein ya `/start` dabayein."
         ),
-        reply_markup=get_main_reply_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -972,8 +869,7 @@ async def main():
     # Register Bot Menu Commands with Telegram
     try:
         await app.bot.set_my_commands([
-            BotCommand("start", "Start bot & verify channels"),
-            BotCommand("stats", "View live bot statistics"),
+            BotCommand("start", "Start bot & access content"),
             BotCommand("cancel", "Cancel current upload session")
         ])
         logger.info("Bot commands successfully registered with Telegram.")
@@ -982,11 +878,8 @@ async def main():
 
     # Register Handlers
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler(["stats", "stat"], stats_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(verify_callback_handler, pattern="^verify_channels$"))
-    app.add_handler(CallbackQueryHandler(stats_command, pattern="^btn_refresh_stats$"))
-    app.add_handler(CallbackQueryHandler(start_command, pattern="^btn_start$"))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, incoming_message_handler))
     app.add_error_handler(error_handler)
 
