@@ -37,4 +37,5 @@ admin-app/build/
 admin-app/*/build/
 admin-app/.idea/
 *.apk
+scratch/
 

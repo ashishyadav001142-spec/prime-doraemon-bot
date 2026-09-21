@@ -35,18 +35,22 @@ object SupabaseManager {
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private fun getBaseUrl(): String = PrimeAdminApp.instance.getSupabaseUrl()
-    private fun getAnonKey(): String = PrimeAdminApp.instance.getSupabaseAnonKey()
-    private fun getAuthToken(): String {
-        val adminToken = PrimeAdminApp.instance.getAdminToken()
-        return if (adminToken.isNotEmpty()) adminToken else getAnonKey()
-    }
+    private fun getSupabaseKey(): String = PrimeAdminApp.instance.getSupabaseKey()
 
     private fun buildRequest(path: String): Request.Builder {
         val url = "${getBaseUrl()}$path"
-        return Request.Builder()
+        val key = getSupabaseKey()
+        val builder = Request.Builder()
             .url(url)
-            .addHeader("apikey", getAnonKey())
-            .addHeader("Authorization", "Bearer ${getAuthToken()}")
+            .header("User-Agent", "PrimeAdminApp/1.0")
+            .header("apikey", key)
+
+        // Only add Authorization: Bearer if key is a legacy JWT (starts with eyJ)
+        // Secret keys (sb_secret_...) must only be passed in apikey header
+        if (key.startsWith("eyJ")) {
+            builder.header("Authorization", "Bearer $key")
+        }
+        return builder
     }
 
     // ====================================================================
@@ -189,18 +193,29 @@ object SupabaseManager {
 
     suspend fun createContentItem(item: ContentItem): Result<ContentItem> = withContext(Dispatchers.IO) {
         try {
-            val jsonBody = json.encodeToString(item)
+            val jsonBody = buildJsonObject {
+                if (item.id.isNotBlank()) put("id", item.id)
+                put("key", item.key)
+                put("content_type", item.contentType)
+                item.textContent?.let { put("text_content", it) }
+                item.telegramFileId?.let { put("telegram_file_id", it) }
+                item.storagePath?.let { put("storage_path", it) }
+                item.caption?.let { put("caption", it) }
+                put("active", item.active)
+                item.expiresAt?.let { put("expires_at", it) }
+            }.toString()
+
             val request = buildRequest("/rest/v1/content_items")
                 .addHeader("Prefer", "return=representation")
                 .post(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 
             client.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException("HTTP ${response.code}: ${response.message}"))
+                    return@withContext Result.failure(IOException("HTTP ${response.code}: $body"))
                 }
-                val body = response.body?.string() ?: "[]"
-                val list = json.decodeFromString<List<ContentItem>>(body)
+                val list = json.decodeFromString<List<ContentItem>>(if (body.startsWith("[")) body else "[$body]")
                 if (list.isNotEmpty()) Result.success(list[0])
                 else Result.failure(IOException("Empty response creating content item"))
             }

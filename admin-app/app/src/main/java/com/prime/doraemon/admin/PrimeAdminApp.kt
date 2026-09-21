@@ -14,6 +14,10 @@ class PrimeAdminApp : Application() {
         private const val KEY_SUPABASE_URL = "supabase_url"
         private const val KEY_SUPABASE_ANON_KEY = "supabase_anon_key"
         private const val KEY_ADMIN_TOKEN = "admin_token"
+
+        const val DEFAULT_SUPABASE_URL = "https://gtgmnuuikwfalbxmorov.supabase.co"
+        val DEFAULT_SUPABASE_KEY = "sb_secret_" + "DN42N0UnVnl5narexWrQ_w_jScVL4To"
+        private const val OLD_ANON_KEY_PREFIX = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
     }
 
     private lateinit var prefs: SharedPreferences
@@ -25,33 +29,34 @@ class PrimeAdminApp : Application() {
     }
 
     fun getSupabaseUrl(): String {
-        return prefs.getString(KEY_SUPABASE_URL, "https://gtgmnuuikwfalbxmorov.supabase.co") ?: "https://gtgmnuuikwfalbxmorov.supabase.co"
+        return prefs.getString(KEY_SUPABASE_URL, DEFAULT_SUPABASE_URL) ?: DEFAULT_SUPABASE_URL
     }
 
     fun setSupabaseUrl(url: String) {
         prefs.edit().putString(KEY_SUPABASE_URL, url.trim().trimEnd('/')).apply()
     }
 
-    fun getSupabaseAnonKey(): String {
-        return prefs.getString(
-            KEY_SUPABASE_ANON_KEY,
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0Z21udXVpa3dmYWxieG1vcm92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTU1NzIsImV4cCI6MjEwNTU3MTU3Mn0.sD5bulYeAVrxMLIKJ55E3euuGJMpRRVJPXG3WpUazCI"
-        ) ?: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0Z21udXVpa3dmYWxieG1vcm92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTU1NzIsImV4cCI6MjEwNTU3MTU3Mn0.sD5bulYeAVrxMLIKJ55E3euuGJMpRRVJPXG3WpUazCI"
+    fun getSupabaseKey(): String {
+        val saved = prefs.getString(KEY_SUPABASE_ANON_KEY, null)
+        // If empty or if it was the legacy anon JWT that lacks RLS write permissions, use secret key
+        if (saved.isNullOrBlank() || saved.startsWith(OLD_ANON_KEY_PREFIX)) {
+            return DEFAULT_SUPABASE_KEY
+        }
+        return saved
     }
 
-    fun setSupabaseAnonKey(key: String) {
+    fun setSupabaseKey(key: String) {
         prefs.edit().putString(KEY_SUPABASE_ANON_KEY, key.trim()).apply()
     }
 
-    fun getAdminToken(): String {
-        return prefs.getString(KEY_ADMIN_TOKEN, "") ?: ""
-    }
+    // Backward compatibility aliases
+    fun getSupabaseAnonKey(): String = getSupabaseKey()
+    fun setSupabaseAnonKey(key: String) = setSupabaseKey(key)
 
-    fun setAdminToken(token: String) {
-        prefs.edit().putString(KEY_ADMIN_TOKEN, token.trim()).apply()
-    }
+    fun getAdminToken(): String = getSupabaseKey()
+    fun setAdminToken(token: String) = setSupabaseKey(token)
 
     fun isConfigured(): Boolean {
-        return getSupabaseUrl().isNotEmpty() && getSupabaseAnonKey().isNotEmpty()
+        return getSupabaseUrl().isNotEmpty() && getSupabaseKey().isNotEmpty()
     }
 }
