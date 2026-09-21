@@ -36,3 +36,5 @@ admin-app/.gradle/
 admin-app/build/
 admin-app/*/build/
 admin-app/.idea/
+*.apk
+

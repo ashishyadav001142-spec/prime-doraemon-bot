@@ -11,8 +11,13 @@ import os
 import sys
 import logging
 import asyncio
+import secrets
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
+
+def generate_random_key(prefix: str = "PD-", length: int = 8) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return prefix + "".join(secrets.choice(alphabet) for _ in range(length))
 
 from aiohttp import web
 from dotenv import load_dotenv
@@ -391,7 +396,42 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_msg_id = update.effective_message.message_id
 
-    # 1. Verify that the user is still a member of all mandatory channels
+    # 1. Search for the key in Supabase
+    content_item = get_content_by_key(user_text)
+
+    if not content_item:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Invalid key. Please check your key and try again."
+        )
+        return
+
+    # Check if this is an Admin Upload Key (for forwarding media)
+    is_upload_key = (
+        user_text.startswith("PD-UP-") or
+        user_text.startswith("UP-") or
+        content_item.get("telegram_file_id") == "PENDING_UPLOAD" or
+        content_item.get("content_type") == "pending"
+    )
+
+    if is_upload_key:
+        context.user_data["pending_upload_id"] = content_item["id"]
+        context.user_data["pending_upload_key"] = user_text
+        context.user_data["pending_caption"] = content_item.get("caption") or ""
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "📥 **Upload Key Verified!**\n\n"
+                "Ab aap jo bhi **Photo, Video, Document/File, Audio, Voice, Animation ya Forwarded Message** save karna chahte hain, use **is chat me send ya forward karein**.\n\n"
+                "👉 File aate hi main use link karke aapko **Final Delivery Key** bana kar de dunga!\n\n"
+                "*(Cancel karne ke liye /cancel likhein)*"
+            ),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    # 2. For Delivery Keys, verify that the user is a member of all mandatory channels
     channels = get_active_channels()
     missing = await get_missing_channels(context.bot, user_id, channels)
 
@@ -406,16 +446,6 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN
-        )
-        return
-
-    # 2. Search for the key in Supabase
-    content_item = get_content_by_key(user_text)
-
-    if not content_item:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Invalid key. Please check your key and try again."
         )
         return
 
@@ -580,9 +610,123 @@ async def text_key_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     )
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Global error handler for unhandled exceptions."""
-    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancels any pending upload session."""
+    if "pending_upload_id" in context.user_data:
+        context.user_data.pop("pending_upload_id", None)
+        context.user_data.pop("pending_upload_key", None)
+        context.user_data.pop("pending_caption", None)
+        await update.effective_message.reply_text("❌ Upload session cancel ho gaya hai.")
+    else:
+        await update.effective_message.reply_text("Koi active upload session nahi hai.")
+
+async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Unified router for all user messages:
+    - If user is in upload mode -> saves the forwarded or sent media and outputs the Final Delivery Key.
+    - If user sent text -> handles key redemption (or upload key).
+    - Otherwise -> prompts the user to enter a key.
+    """
+    if not update.effective_message or not update.effective_user or not update.effective_chat:
+        return
+
+    message = update.effective_message
+    chat_id = update.effective_chat.id
+
+    # -------------------------------------------------------------
+    # CASE 1: Admin is in Upload Mode (awaiting forward/file)
+    # -------------------------------------------------------------
+    if "pending_upload_id" in context.user_data:
+        pending_id = context.user_data.pop("pending_upload_id")
+        pending_key = context.user_data.pop("pending_upload_key", None)
+        saved_caption = context.user_data.pop("pending_caption", "")
+
+        detected_type = None
+        file_id = None
+        text_content = None
+
+        if message.photo:
+            detected_type = "photo"
+            file_id = message.photo[-1].file_id
+        elif message.video:
+            detected_type = "video"
+            file_id = message.video.file_id
+        elif message.document:
+            detected_type = "document"
+            file_id = message.document.file_id
+        elif message.audio:
+            detected_type = "audio"
+            file_id = message.audio.file_id
+        elif message.voice:
+            detected_type = "voice"
+            file_id = message.voice.file_id
+        elif message.animation:
+            detected_type = "animation"
+            file_id = message.animation.file_id
+        elif message.text:
+            detected_type = "text"
+            text_content = message.text
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Format recognize nahi hua. Kripya koi Photo, Video, Document ya Forward message bhejein."
+            )
+            # Restore session so admin can retry
+            context.user_data["pending_upload_id"] = pending_id
+            context.user_data["pending_upload_key"] = pending_key
+            context.user_data["pending_caption"] = saved_caption
+            return
+
+        final_caption = message.caption or saved_caption or ""
+        final_key = generate_random_key(prefix="PD-", length=8)
+
+        try:
+            update_data = {
+                "key": final_key,
+                "content_type": detected_type,
+                "telegram_file_id": file_id,
+                "text_content": text_content,
+                "caption": final_caption if final_caption else None,
+                "active": True
+            }
+            supabase.table("content_items").update(update_data).eq("id", pending_id).execute()
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "🎉 **Content Successfully Linked & Stored!**\n\n"
+                    f"📁 **Type:** `{detected_type.upper()}`\n"
+                    f"🔑 **Final Delivery Key:** `{final_key}`\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "👉 Ab ye key aap kisi bhi user ko share kar sakte hain.\n"
+                    "👉 Jab bhi koi user ye key bot me paste karega, usko ye file deliver hogi aur **theek 15 minute baad us user ki chat se automatically delete ho jayegi**!\n"
+                    "👉 Database me ye content hamesha safe rahega."
+                ),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Error updating content item: {e}")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Error saving content: {str(e)}"
+            )
+        return
+
+    # -------------------------------------------------------------
+    # CASE 2: Message contains text -> process key
+    # -------------------------------------------------------------
+    if message.text:
+        await text_key_handler(update, context)
+        return
+
+    # -------------------------------------------------------------
+    # CASE 3: Random media without an upload session
+    # -------------------------------------------------------------
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="⚠️ **Invalid Action:** Pehle apna Key enter karein ya `/start` dabayein.",
+        parse_mode=ParseMode.MARKDOWN
+    )
 
 # ====================================================================
 # 6. RENDER DUMMY WEB SERVER (HEALTH CHECK FOR FREE WEB SERVICES)
@@ -627,8 +771,9 @@ async def main():
 
     # Register Handlers
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(verify_callback_handler, pattern="^verify_channels$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_key_handler))
+    app.add_handler(MessageHandler(~filters.COMMAND, incoming_message_handler))
     app.add_error_handler(error_handler)
 
     logger.info("Bot application configured. Starting long polling...")

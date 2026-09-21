@@ -157,18 +157,31 @@ fun KeyDisplayCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isUploadKey = keyString.startsWith("PD-UP-") || keyString.startsWith("UP-")
 
     GlassCard(
         modifier = modifier,
-        borderColor = NeonCyan.copy(alpha = 0.5f),
+        borderColor = if (isUploadKey) AccentAmber.copy(alpha = 0.7f) else NeonCyan.copy(alpha = 0.5f),
         backgroundColor = DarkSurfaceElevated
     ) {
-        Text(
-            text = "KEY GENERATED",
-            style = MaterialTheme.typography.labelSmall,
-            color = NeonCyan,
-            fontWeight = FontWeight.Bold
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = if (isUploadKey) Icons.Default.Share else Icons.Default.ContentCopy,
+                contentDescription = null,
+                tint = if (isUploadKey) AccentAmber else NeonCyan,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = if (isUploadKey) "UPLOAD KEY GENERATED (SEND TO BOT)" else "DELIVERY KEY GENERATED",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isUploadKey) AccentAmber else NeonCyan,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier
@@ -190,6 +203,29 @@ fun KeyDisplayCard(
             )
         }
 
+        if (isUploadKey) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = DarkBackground.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "📋 Next Steps to Link Content:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentAmber,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text("1. Copy this Upload Key below.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Text("2. Open @PrimeDoraemonBot in Telegram.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Text("3. Send this Upload Key to the bot.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Text("4. Forward your File, Video, Photo, or Message to the bot.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Text("5. Bot will return your FINAL DELIVERY KEY!", style = MaterialTheme.typography.bodySmall, color = NeonCyan, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -202,31 +238,48 @@ fun KeyDisplayCard(
                     Toast.makeText(context, "Key copied to clipboard!", Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = DoraemonBlue),
+                colors = ButtonDefaults.buttonColors(containerColor = if (isUploadKey) AccentAmber else DoraemonBlue),
                 shape = RoundedCornerShape(10.dp)
             ) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("COPY KEY")
+                Text(if (isUploadKey) "COPY UPLOAD KEY" else "COPY KEY", fontWeight = FontWeight.Bold)
             }
 
-            OutlinedButton(
-                onClick = {
-                    val sendIntent = Intent().apply {
-                        action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_TEXT, "Your PRIME DORAEMON BOT Key: $keyString")
-                        type = "text/plain"
-                    }
-                    context.startActivity(Intent.createChooser(sendIntent, "Share Access Key"))
-                },
-                modifier = Modifier.weight(1f),
-                border = BorderStroke(1.dp, NeonCyan),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("SHARE KEY")
+            if (isUploadKey) {
+                OutlinedButton(
+                    onClick = {
+                        val botIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/PrimeDoraemonBot"))
+                        context.startActivity(botIntent)
+                    },
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, NeonCyan),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("OPEN BOT", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = {
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, "Your PRIME DORAEMON BOT Key: $keyString")
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Access Key"))
+                    },
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, NeonCyan),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("SHARE KEY", fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
